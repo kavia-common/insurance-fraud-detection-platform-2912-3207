@@ -55,6 +55,34 @@ def list_outcomes(
 
 
 # PUBLIC_INTERFACE
+# NOTE: This route MUST be defined BEFORE /{outcome_id} to prevent
+# "claim" from being captured as an outcome_id path parameter.
+@router.get(
+    "/claim/{claim_id}",
+    response_model=Optional[OutcomeResponse],
+    summary="Get outcome for a claim",
+    description="Retrieve the investigation outcome for a specific claim.",
+)
+def get_outcome_by_claim(claim_id: str):
+    """Get the outcome for a specific claim.
+
+    Args:
+        claim_id: UUID of the claim.
+
+    Returns:
+        Outcome object or None.
+    """
+    try:
+        resp = supabase.table("claim_outcomes").select("*").eq("claim_id", claim_id).execute()
+        if not resp.data:
+            return None
+        return resp.data[0]
+    except Exception as e:
+        logger.error(f"Error getting outcome for claim {claim_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get outcome: {str(e)}")
+
+
+# PUBLIC_INTERFACE
 @router.get(
     "/{outcome_id}",
     response_model=OutcomeResponse,
@@ -79,32 +107,6 @@ def get_outcome(outcome_id: str):
         raise
     except Exception as e:
         logger.error(f"Error getting outcome {outcome_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get outcome: {str(e)}")
-
-
-# PUBLIC_INTERFACE
-@router.get(
-    "/claim/{claim_id}",
-    response_model=Optional[OutcomeResponse],
-    summary="Get outcome for a claim",
-    description="Retrieve the investigation outcome for a specific claim.",
-)
-def get_outcome_by_claim(claim_id: str):
-    """Get the outcome for a specific claim.
-
-    Args:
-        claim_id: UUID of the claim.
-
-    Returns:
-        Outcome object or None.
-    """
-    try:
-        resp = supabase.table("claim_outcomes").select("*").eq("claim_id", claim_id).execute()
-        if not resp.data:
-            return None
-        return resp.data[0]
-    except Exception as e:
-        logger.error(f"Error getting outcome for claim {claim_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get outcome: {str(e)}")
 
 

@@ -79,14 +79,28 @@ app = FastAPI(
 # ---- CORS Configuration from environment ----
 allowed_origins_str = os.getenv("ALLOWED_ORIGINS", "*")
 allowed_origins = [o.strip() for o in allowed_origins_str.split(",") if o.strip()]
+
+# Also include FRONTEND_URL if set, to ensure the frontend origin is always allowed
+frontend_url = os.getenv("FRONTEND_URL", "")
+if frontend_url and frontend_url not in allowed_origins:
+    allowed_origins.append(frontend_url)
+
 if not allowed_origins:
     allowed_origins = ["*"]
 
 allowed_methods_str = os.getenv("ALLOWED_METHODS", "GET,POST,PUT,DELETE,PATCH,OPTIONS")
 allowed_methods = [m.strip() for m in allowed_methods_str.split(",") if m.strip()]
 
-allowed_headers_str = os.getenv("ALLOWED_HEADERS", "Content-Type,Authorization,X-Requested-With")
+# Ensure commonly needed headers are always included
+allowed_headers_str = os.getenv(
+    "ALLOWED_HEADERS",
+    "Content-Type,Authorization,X-Requested-With,Accept,Origin"
+)
 allowed_headers = [h.strip() for h in allowed_headers_str.split(",") if h.strip()]
+# Add Accept and Origin if not already present (browsers send these automatically)
+for required_header in ["Accept", "Origin"]:
+    if required_header not in allowed_headers:
+        allowed_headers.append(required_header)
 
 cors_max_age = int(os.getenv("CORS_MAX_AGE", "3600"))
 

@@ -58,6 +58,41 @@ def list_assignments(
 
 
 # PUBLIC_INTERFACE
+# NOTE: This route MUST be defined BEFORE /{assignment_id} to prevent
+# "queue" from being captured as an assignment_id path parameter.
+@router.get(
+    "/queue/{investigator_id}",
+    response_model=List[AssignmentResponse],
+    summary="Get investigator queue",
+    description="Retrieve the pending/active assignment queue for a specific investigator.",
+)
+def get_investigator_queue(investigator_id: str):
+    """Get the work queue for a specific investigator.
+
+    Returns pending and in-progress assignments ordered by priority.
+
+    Args:
+        investigator_id: UUID of the investigator.
+
+    Returns:
+        List of active assignments.
+    """
+    try:
+        resp = (
+            supabase.table("investigator_assignments")
+            .select("*")
+            .eq("investigator_id", investigator_id)
+            .in_("status", ["pending", "accepted", "in_progress"])
+            .order("priority", desc=False)
+            .execute()
+        )
+        return resp.data or []
+    except Exception as e:
+        logger.error(f"Error getting queue for investigator {investigator_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get queue: {str(e)}")
+
+
+# PUBLIC_INTERFACE
 @router.get(
     "/{assignment_id}",
     response_model=AssignmentResponse,
@@ -175,36 +210,3 @@ def update_assignment(assignment_id: str, assignment: AssignmentUpdate):
     except Exception as e:
         logger.error(f"Error updating assignment {assignment_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to update assignment: {str(e)}")
-
-
-# PUBLIC_INTERFACE
-@router.get(
-    "/queue/{investigator_id}",
-    response_model=List[AssignmentResponse],
-    summary="Get investigator queue",
-    description="Retrieve the pending/active assignment queue for a specific investigator.",
-)
-def get_investigator_queue(investigator_id: str):
-    """Get the work queue for a specific investigator.
-
-    Returns pending and in-progress assignments ordered by priority.
-
-    Args:
-        investigator_id: UUID of the investigator.
-
-    Returns:
-        List of active assignments.
-    """
-    try:
-        resp = (
-            supabase.table("investigator_assignments")
-            .select("*")
-            .eq("investigator_id", investigator_id)
-            .in_("status", ["pending", "accepted", "in_progress"])
-            .order("priority", desc=False)
-            .execute()
-        )
-        return resp.data or []
-    except Exception as e:
-        logger.error(f"Error getting queue for investigator {investigator_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get queue: {str(e)}")

@@ -227,8 +227,16 @@ def score_and_save(claim_id: str, claim_data: Dict[str, Any]) -> Tuple[int, List
     # Save signals to database
     save_signals(claim_id, signals)
 
-    # Update claim fraud_score and status
-    update_data = {"fraud_score": fraud_score}
+    # Compute risk_level as a fallback in case the DB generated column is missing
+    if fraud_score >= 75:
+        risk_level = "high"
+    elif fraud_score >= 40:
+        risk_level = "medium"
+    else:
+        risk_level = "low"
+
+    # Update claim fraud_score, risk_level, and status
+    update_data = {"fraud_score": fraud_score, "risk_level": risk_level}
     if fraud_score >= 75:
         update_data["status"] = "flagged"
     elif fraud_score >= 40:
