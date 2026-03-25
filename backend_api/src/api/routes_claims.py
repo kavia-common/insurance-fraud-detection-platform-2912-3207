@@ -2,6 +2,11 @@
 Claims API routes for the Insurance Fraud Detection Platform.
 Handles claim ingestion (CSV upload and manual entry), retrieval, updating,
 fraud scoring trigger, and claim detail endpoints.
+
+IMPORTANT — Route ordering:
+Static paths (e.g. /upload-csv) MUST be registered BEFORE parameterised
+paths (e.g. /{claim_id}) so FastAPI does not treat the static segment as
+a path-parameter value.
 """
 import csv
 import io
@@ -31,6 +36,10 @@ def _generate_claim_number() -> str:
     """Generate a unique claim number."""
     return f"CLM-{uuid.uuid4().hex[:8].upper()}"
 
+
+# ---------------------------------------------------------------------------
+# Collection-level routes (no path parameter) — always safe at any position
+# ---------------------------------------------------------------------------
 
 # PUBLIC_INTERFACE
 @router.get(
@@ -74,37 +83,6 @@ def list_claims(
     except Exception as e:
         logger.error(f"Error listing claims: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list claims: {str(e)}")
-
-
-# PUBLIC_INTERFACE
-@router.get(
-    "/{claim_id}",
-    response_model=ClaimResponse,
-    summary="Get claim details",
-    description="Retrieve detailed information about a specific claim by its UUID.",
-)
-def get_claim(claim_id: str):
-    """Get a single claim by its UUID.
-
-    Args:
-        claim_id: UUID of the claim.
-
-    Returns:
-        Claim detail object.
-
-    Raises:
-        HTTPException: If claim not found.
-    """
-    try:
-        resp = supabase.table("claims").select("*").eq("id", claim_id).execute()
-        if not resp.data:
-            raise HTTPException(status_code=404, detail="Claim not found")
-        return resp.data[0]
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting claim {claim_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get claim: {str(e)}")
 
 
 # PUBLIC_INTERFACE
@@ -152,6 +130,133 @@ def create_claim(claim: ClaimCreate):
     except Exception as e:
         logger.error(f"Error creating claim: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to create claim: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Static sub-paths — MUST come before /{claim_id} to avoid shadowing
+# ---------------------------------------------------------------------------
+
+# PUBLIC_INTERFACE
+@router.post(
+    "/upload-csv",
+    response_model=CSVUploadResponse,
+    summary="Upload claims via CSV",
+    description=(
+        "Ingest multiple claims from a CSV file. Expected columns: "
+        "claim_number, claim_type, claim_amount, incident_date, description, "
+        "location, police_report_filed, witnesses."
+    ),
+)
+async def upload_csv(file: UploadFile = File(...)):
+    """Ingest claims from a CSV file upload.
+
+    Processes each row, creates claims, and runs fraud scoring on each.
+
+    Args:
+        file: Uploaded CSV file.
+
+    Returns:
+        Summary of ingestion results including created claim IDs and any errors.
+    """
+    if not file.filename or not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="File must be a CSV")
+
+    try:
+        content = await file.read()
+        text = content.decode("utf-8")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read file: {str(e)}")
+
+    reader = csv.DictReader(io.StringIO(text))
+    total_rows = 0
+    success_count = 0
+    failed_rows = 0
+    errors = []
+    claim_ids = []
+
+    for row_num, row in enumerate(reader, start=1):
+        total_rows += 1
+        try:
+            # Map CSV columns to claim fields
+            claim_data = {
+                "claim_number": row.get("claim_number", _generate_claim_number()),
+                "claim_type": row.get("claim_type", "Unknown"),
+                "claim_amount": float(row.get("claim_amount", 0)),
+                "incident_date": row.get("incident_date", date.today().isoformat()),
+                "filed_date": row.get("filed_date", date.today().isoformat()),
+                "description": row.get("description", ""),
+                "location": row.get("location", ""),
+                "police_report_filed": row.get("police_report_filed", "false").lower() in ("true", "1", "yes"),
+                "witnesses": int(row.get("witnesses", 0)),
+                "ingestion_source": "csv",
+                "status": "new",
+            }
+
+            # Optional fields
+            if row.get("policy_id"):
+                claim_data["policy_id"] = row["policy_id"]
+            if row.get("policyholder_id"):
+                claim_data["policyholder_id"] = row["policyholder_id"]
+            if row.get("police_report_number"):
+                claim_data["police_report_number"] = row["police_report_number"]
+
+            resp = supabase.table("claims").insert(claim_data).execute()
+            if resp.data:
+                created = resp.data[0]
+                cid = created["id"]
+                claim_ids.append(cid)
+                # Run fraud scoring
+                score_and_save(cid, created)
+                success_count += 1
+            else:
+                failed_rows += 1
+                errors.append({"row": row_num, "error": "Insert returned no data"})
+        except Exception as e:
+            failed_rows += 1
+            errors.append({"row": row_num, "error": str(e)})
+
+    return CSVUploadResponse(
+        total_rows=total_rows,
+        successfully_ingested=success_count,
+        failed_rows=failed_rows,
+        errors=errors,
+        claim_ids=claim_ids,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Parameterised routes — /{claim_id} and its sub-paths
+# ---------------------------------------------------------------------------
+
+# PUBLIC_INTERFACE
+@router.get(
+    "/{claim_id}",
+    response_model=ClaimResponse,
+    summary="Get claim details",
+    description="Retrieve detailed information about a specific claim by its UUID.",
+)
+def get_claim(claim_id: str):
+    """Get a single claim by its UUID.
+
+    Args:
+        claim_id: UUID of the claim.
+
+    Returns:
+        Claim detail object.
+
+    Raises:
+        HTTPException: If claim not found.
+    """
+    try:
+        resp = supabase.table("claims").select("*").eq("id", claim_id).execute()
+        if not resp.data:
+            raise HTTPException(status_code=404, detail="Claim not found")
+        return resp.data[0]
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting claim {claim_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get claim: {str(e)}")
 
 
 # PUBLIC_INTERFACE
@@ -249,87 +354,3 @@ def get_claim_signals(claim_id: str):
     except Exception as e:
         logger.error(f"Error getting signals for claim {claim_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get signals: {str(e)}")
-
-
-# PUBLIC_INTERFACE
-@router.post(
-    "/upload-csv",
-    response_model=CSVUploadResponse,
-    summary="Upload claims via CSV",
-    description="Ingest multiple claims from a CSV file. Expected columns: claim_number, claim_type, claim_amount, incident_date, description, location, police_report_filed, witnesses.",
-)
-async def upload_csv(file: UploadFile = File(...)):
-    """Ingest claims from a CSV file upload.
-
-    Processes each row, creates claims, and runs fraud scoring on each.
-
-    Args:
-        file: Uploaded CSV file.
-
-    Returns:
-        Summary of ingestion results including created claim IDs and any errors.
-    """
-    if not file.filename or not file.filename.endswith(".csv"):
-        raise HTTPException(status_code=400, detail="File must be a CSV")
-
-    try:
-        content = await file.read()
-        text = content.decode("utf-8")
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not read file: {str(e)}")
-
-    reader = csv.DictReader(io.StringIO(text))
-    total_rows = 0
-    success_count = 0
-    failed_rows = 0
-    errors = []
-    claim_ids = []
-
-    for row_num, row in enumerate(reader, start=1):
-        total_rows += 1
-        try:
-            # Map CSV columns to claim fields
-            claim_data = {
-                "claim_number": row.get("claim_number", _generate_claim_number()),
-                "claim_type": row.get("claim_type", "Unknown"),
-                "claim_amount": float(row.get("claim_amount", 0)),
-                "incident_date": row.get("incident_date", date.today().isoformat()),
-                "filed_date": row.get("filed_date", date.today().isoformat()),
-                "description": row.get("description", ""),
-                "location": row.get("location", ""),
-                "police_report_filed": row.get("police_report_filed", "false").lower() in ("true", "1", "yes"),
-                "witnesses": int(row.get("witnesses", 0)),
-                "ingestion_source": "csv",
-                "status": "new",
-            }
-
-            # Optional fields
-            if row.get("policy_id"):
-                claim_data["policy_id"] = row["policy_id"]
-            if row.get("policyholder_id"):
-                claim_data["policyholder_id"] = row["policyholder_id"]
-            if row.get("police_report_number"):
-                claim_data["police_report_number"] = row["police_report_number"]
-
-            resp = supabase.table("claims").insert(claim_data).execute()
-            if resp.data:
-                created = resp.data[0]
-                claim_id = created["id"]
-                claim_ids.append(claim_id)
-                # Run fraud scoring
-                score_and_save(claim_id, created)
-                success_count += 1
-            else:
-                failed_rows += 1
-                errors.append({"row": row_num, "error": "Insert returned no data"})
-        except Exception as e:
-            failed_rows += 1
-            errors.append({"row": row_num, "error": str(e)})
-
-    return CSVUploadResponse(
-        total_rows=total_rows,
-        successfully_ingested=success_count,
-        failed_rows=failed_rows,
-        errors=errors,
-        claim_ids=claim_ids,
-    )
