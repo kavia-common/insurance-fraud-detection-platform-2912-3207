@@ -497,6 +497,12 @@ def score_and_save(
 ) -> Tuple[int, List[Dict[str, Any]]]:
     """Evaluate claim, save signals, and update the claim's fraud_score.
 
+    Persists the computed fraud_score (and conditionally the status) back
+    to the claims table.  The ``risk_level`` column is a PostgreSQL
+    GENERATED ALWAYS column derived from ``fraud_score``, so it must NOT
+    be included in the UPDATE payload — the database computes it
+    automatically.
+
     Args:
         claim_id: UUID of the claim.
         claim_data: Dictionary of claim fields.
@@ -509,7 +515,10 @@ def score_and_save(
     # Save signals to database
     save_signals(claim_id, signals)
 
-    # Compute risk_level
+    # Compute risk_level locally for API consumers (informational only).
+    # NOTE: risk_level is a GENERATED ALWAYS column in the DB; the DB
+    # derives it from fraud_score automatically.  We must NOT include it
+    # in the UPDATE payload or PostgreSQL will reject the entire statement.
     if fraud_score >= 75:
         risk_level = "high"
     elif fraud_score >= 40:
@@ -517,20 +526,33 @@ def score_and_save(
     else:
         risk_level = "low"
 
-    # Update claim fraud_score, risk_level, and status
+    # Build update payload — only mutable columns
     update_data: Dict[str, Any] = {
         "fraud_score": fraud_score,
-        "risk_level": risk_level,
     }
+    # Conditionally update status based on score thresholds
     if fraud_score >= 75:
         update_data["status"] = "flagged"
     elif fraud_score >= 40:
         update_data["status"] = "under_review"
 
     try:
-        supabase.table("claims").update(update_data).eq("id", claim_id).execute()
+        resp = supabase.table("claims").update(update_data).eq("id", claim_id).execute()
+        if resp.data:
+            logger.info(
+                f"Updated claim {claim_id}: fraud_score={fraud_score}, "
+                f"risk_level={risk_level} (DB-computed)"
+            )
+        else:
+            logger.warning(
+                f"Update claim {claim_id} returned no data; "
+                f"fraud_score={fraud_score} may not have been persisted"
+            )
     except Exception as e:
-        logger.warning(f"Failed to update claim {claim_id} fraud score: {e}")
+        logger.error(
+            f"Failed to persist fraud_score={fraud_score} for claim {claim_id}: {e}",
+            exc_info=True,
+        )
 
     return fraud_score, signals
 

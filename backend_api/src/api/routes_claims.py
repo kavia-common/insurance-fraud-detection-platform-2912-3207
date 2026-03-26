@@ -402,11 +402,15 @@ def update_claim(claim_id: str, claim: ClaimUpdate):
 def rescore_claim(claim_id: str):
     """Re-run fraud scoring on an existing claim.
 
+    Deletes old fraud signals, re-evaluates all active rules, persists
+    the new fraud_score to the claim record (risk_level is auto-computed
+    by the database), and returns the updated claim state.
+
     Args:
         claim_id: UUID of the claim.
 
     Returns:
-        Dict with new fraud_score and signal details.
+        Dict with new fraud_score, risk_level, status, and signal details.
     """
     try:
         # Fetch the claim
@@ -415,16 +419,40 @@ def rescore_claim(claim_id: str):
             raise HTTPException(status_code=404, detail="Claim not found")
         claim_data = claim_resp.data[0]
 
-        # Delete old signals
+        # Delete old signals before re-scoring
         try:
             supabase.table("fraud_signals").delete().eq("claim_id", claim_id).execute()
         except Exception:
-            pass
+            logger.warning(f"Could not delete old signals for claim {claim_id}")
 
+        # Score and persist
         fraud_score, signals = score_and_save(claim_id, claim_data)
+
+        # Re-fetch the claim to get the DB-persisted fraud_score and the
+        # auto-computed risk_level (GENERATED ALWAYS column).
+        try:
+            updated_resp = supabase.table("claims").select("*").eq("id", claim_id).execute()
+            if updated_resp.data:
+                updated_claim = updated_resp.data[0]
+                risk_level = updated_claim.get("risk_level", "low")
+                status = updated_claim.get("status", "new")
+                persisted_score = updated_claim.get("fraud_score", fraud_score)
+            else:
+                # Fallback to in-memory values if re-fetch fails
+                persisted_score = fraud_score
+                risk_level = "high" if fraud_score >= 75 else ("medium" if fraud_score >= 40 else "low")
+                status = claim_data.get("status", "new")
+        except Exception as e:
+            logger.warning(f"Could not re-fetch claim {claim_id} after scoring: {e}")
+            persisted_score = fraud_score
+            risk_level = "high" if fraud_score >= 75 else ("medium" if fraud_score >= 40 else "low")
+            status = claim_data.get("status", "new")
+
         return {
             "claim_id": claim_id,
-            "fraud_score": fraud_score,
+            "fraud_score": persisted_score,
+            "risk_level": risk_level,
+            "status": status,
             "signals": signals,
         }
     except HTTPException:
