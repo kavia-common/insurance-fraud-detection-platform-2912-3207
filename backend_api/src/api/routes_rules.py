@@ -8,11 +8,34 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from src.api.database import supabase
+from src.api.fraud_engine import get_available_evaluators
 from src.api.models import FraudRuleCreate, FraudRuleResponse, FraudRuleUpdate
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/rules", tags=["Fraud Rules"])
+
+
+# PUBLIC_INTERFACE
+@router.get(
+    "/evaluators",
+    summary="List available rule evaluators",
+    description=(
+        "Return all named evaluator functions that can be used in a rule's "
+        "condition_config.evaluator field. Useful for rule management UI."
+    ),
+)
+def list_evaluators():
+    """List all available fraud rule evaluator functions.
+
+    Returns a list of evaluator keys and their descriptions so that
+    administrators know which evaluator logic is available when
+    creating or editing rules.
+
+    Returns:
+        List of dicts with evaluator_key and description.
+    """
+    return get_available_evaluators()
 
 
 # PUBLIC_INTERFACE

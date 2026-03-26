@@ -99,15 +99,37 @@ Each table has a policy: `anon_all_<table>` granting full CRUD to the `anon` rol
 | `00000000-...-000000000002` | mgr@insure.com | manager | SIU |
 | `00000000-...-000000000003` | inv@insure.com | investigator | SIU |
 
-### Default Fraud Rules (6)
-| Rule Name | Category | Weight | Description |
-|-----------|----------|--------|-------------|
-| High Amount | amount | 25 | Flags claims over $15,000 |
-| Quick Filing | timing | 18 | Filed within 2 days of policy |
-| Recent Address Change | pattern | 15 | Address changed <3m before claim |
-| Multiple Claims in 6 Months | frequency | 20 | >2 claims in 6m from same holder |
-| Out-of-State Incident | location | 10 | Incident state ≠ policyholder state |
-| Known Fraud Network | network | 30 | Related to prior fraud network |
+### Default Fraud Rules (11)
+| Rule Name | Category | Weight | Evaluator Key | Description |
+|-----------|----------|--------|---------------|-------------|
+| High Amount | amount | 25 | high_amount | Flags claims over $15,000 |
+| Quick Filing | timing | 18 | quick_filing | Filed within 2 days of incident |
+| Recent Address Change | pattern | 15 | no_police_report | Address changed <3m before claim |
+| Multiple Claims in 6 Months | frequency | 20 | frequency | >2 claims in 6m from same holder |
+| Out-of-State Incident | location | 10 | location | Incident state ≠ policyholder state |
+| Known Fraud Network | network | 30 | network | Related to prior fraud network |
+| Duplicate Claimant | pattern | 20 | duplicate_claimant | Same claimant name on multiple claims |
+| Suspicious Description | custom | 15 | suspicious_description | Description contains fraud-indicator keywords |
+| Third Party Involvement | custom | 12 | third_party_involvement | Claims involving third parties |
+| Recent Policy | timing | 18 | recent_policy | Incident within 30 days of policy start |
+| Address Reuse | pattern | 15 | address_match | Same claimant address on 2+ claims |
+
+### Available Evaluator Keys (12)
+Rules can specify an `evaluator` key in their `condition_config` JSON to use a specific evaluator function:
+| Evaluator Key | Description |
+|---------------|-------------|
+| `high_amount` | Flag claims exceeding a dollar-amount threshold |
+| `quick_filing` | Flag claims filed suspiciously soon after incident |
+| `frequency` | Flag policyholders with multiple claims in a time window |
+| `no_police_report` | Flag high-value claims without a police report |
+| `no_witnesses` | Flag high-value claims with zero witnesses |
+| `location` | Flag claims with suspicious location keywords |
+| `network` | Flag policyholders linked to known fraud networks |
+| `duplicate_claimant` | Flag claimant names appearing on multiple claims |
+| `suspicious_description` | Flag descriptions containing suspicious keywords |
+| `third_party_involvement` | Flag claims involving third parties |
+| `recent_policy` | Flag claims filed shortly after policy inception |
+| `address_match` | Flag claimant addresses reused across multiple claims |
 
 ### Sample Data
 - 1 policyholder (Elena Smith)
