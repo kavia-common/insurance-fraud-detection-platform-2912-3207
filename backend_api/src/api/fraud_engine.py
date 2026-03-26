@@ -223,10 +223,23 @@ def _evaluate_third_party_involvement(claim: Dict[str, Any], config: Dict[str, A
         min_parties (int): Minimum number of third parties to trigger. Default 1.
     """
     min_parties = int(config.get("min_parties", 1))
-    third_parties_raw = (claim.get("third_parties") or "").strip()
-    if not third_parties_raw:
+    tp_value = claim.get("third_parties")
+    # Handle JSONB list/dict values as well as plain strings
+    if tp_value is None:
         return False, "No third-party information provided"
-    parties = [p.strip() for p in re.split(r"[,;\n]+", third_parties_raw) if p.strip()]
+    if isinstance(tp_value, (list, tuple)):
+        parties = [str(item).strip() for item in tp_value if str(item).strip()]
+    elif isinstance(tp_value, dict):
+        parties = [str(v).strip() for v in tp_value.values() if str(v).strip()]
+    elif isinstance(tp_value, str):
+        third_parties_raw = tp_value.strip()
+        if not third_parties_raw:
+            return False, "No third-party information provided"
+        parties = [p.strip() for p in re.split(r"[,;\n]+", third_parties_raw) if p.strip()]
+    else:
+        parties = [str(tp_value).strip()] if str(tp_value).strip() else []
+    if not parties:
+        return False, "No third-party information provided"
     party_count = len(parties)
     if party_count >= min_parties:
         label = "party" if party_count == 1 else "parties"

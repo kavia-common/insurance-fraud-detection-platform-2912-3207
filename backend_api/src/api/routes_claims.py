@@ -10,10 +10,11 @@ a path-parameter value.
 """
 import csv
 import io
+import json
 import logging
 import uuid
 from datetime import date
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
@@ -35,6 +36,90 @@ router = APIRouter(prefix="/api/claims", tags=["Claims"])
 def _generate_claim_number() -> str:
     """Generate a unique claim number."""
     return f"CLM-{uuid.uuid4().hex[:8].upper()}"
+
+
+def _sanitize_claim_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a raw claim row from the database so it passes Pydantic validation.
+
+    Handles:
+    - JSONB ``third_parties`` (list/dict) converted to a comma-separated string.
+    - Null values for required fields replaced with sensible defaults.
+    - Type coercion for numeric / boolean fields that may arrive as strings or
+      unexpected types from manual SQL inserts.
+
+    Args:
+        row: Raw dictionary from a Supabase query result.
+
+    Returns:
+        A cleaned dictionary safe for ``ClaimResponse`` construction.
+    """
+    if not row:
+        return row
+
+    sanitized = dict(row)
+
+    # --- third_parties: may be a JSONB list/dict; ensure it is a string or None ---
+    tp = sanitized.get("third_parties")
+    if tp is not None:
+        if isinstance(tp, (list, tuple)):
+            # Convert list of party names to comma-separated string
+            sanitized["third_parties"] = ", ".join(str(item) for item in tp)
+        elif isinstance(tp, dict):
+            # Convert dict to JSON string representation
+            try:
+                sanitized["third_parties"] = json.dumps(tp)
+            except (TypeError, ValueError):
+                sanitized["third_parties"] = str(tp)
+        elif not isinstance(tp, str):
+            sanitized["third_parties"] = str(tp)
+
+    # --- Required string fields: provide safe defaults for nulls ---
+    if not sanitized.get("claim_number"):
+        sanitized["claim_number"] = _generate_claim_number()
+
+    if not sanitized.get("claim_type"):
+        sanitized["claim_type"] = "Unknown"
+
+    if not sanitized.get("incident_date"):
+        sanitized["incident_date"] = date.today().isoformat()
+
+    # --- claim_amount: ensure it is a float ---
+    try:
+        sanitized["claim_amount"] = float(sanitized.get("claim_amount") or 0)
+    except (TypeError, ValueError):
+        sanitized["claim_amount"] = 0.0
+
+    # --- fraud_score: ensure int or None ---
+    fs = sanitized.get("fraud_score")
+    if fs is not None:
+        try:
+            sanitized["fraud_score"] = int(fs)
+        except (TypeError, ValueError):
+            sanitized["fraud_score"] = 0
+
+    # --- witnesses: ensure int or None ---
+    w = sanitized.get("witnesses")
+    if w is not None:
+        try:
+            sanitized["witnesses"] = int(w)
+        except (TypeError, ValueError):
+            sanitized["witnesses"] = 0
+
+    # --- police_report_filed: ensure bool or None ---
+    prf = sanitized.get("police_report_filed")
+    if prf is not None and not isinstance(prf, bool):
+        if isinstance(prf, str):
+            sanitized["police_report_filed"] = prf.lower() in ("true", "1", "yes", "t")
+        else:
+            sanitized["police_report_filed"] = bool(prf)
+
+    # --- Stringify date/datetime objects that Pydantic expects as strings ---
+    for date_field in ("incident_date", "filed_date", "created_at", "updated_at"):
+        val = sanitized.get(date_field)
+        if val is not None and not isinstance(val, str):
+            sanitized[date_field] = str(val)
+
+    return sanitized
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +164,10 @@ def list_claims(
             )
         query = query.order("created_at", desc=True).range(offset, offset + limit - 1)
         resp = query.execute()
-        return resp.data or []
+        rows = resp.data or []
+        # Sanitize each row to handle manually-inserted data with unexpected
+        # types (e.g. JSONB third_parties, null required fields).
+        return [_sanitize_claim_row(row) for row in rows]
     except Exception as e:
         logger.error(f"Error listing claims: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list claims: {str(e)}")
@@ -124,7 +212,8 @@ def create_claim(claim: ClaimCreate):
         fraud_score, signals = score_and_save(claim_id, created_claim)
         # Re-fetch to get updated score
         updated = supabase.table("claims").select("*").eq("id", claim_id).execute()
-        return updated.data[0] if updated.data else created_claim
+        result = updated.data[0] if updated.data else created_claim
+        return _sanitize_claim_row(result)
     except HTTPException:
         raise
     except Exception as e:
@@ -264,7 +353,7 @@ def get_claim(claim_id: str):
         resp = supabase.table("claims").select("*").eq("id", claim_id).execute()
         if not resp.data:
             raise HTTPException(status_code=404, detail="Claim not found")
-        return resp.data[0]
+        return _sanitize_claim_row(resp.data[0])
     except HTTPException:
         raise
     except Exception as e:
@@ -296,7 +385,7 @@ def update_claim(claim_id: str, claim: ClaimUpdate):
         resp = supabase.table("claims").update(data).eq("id", claim_id).execute()
         if not resp.data:
             raise HTTPException(status_code=404, detail="Claim not found")
-        return resp.data[0]
+        return _sanitize_claim_row(resp.data[0])
     except HTTPException:
         raise
     except Exception as e:

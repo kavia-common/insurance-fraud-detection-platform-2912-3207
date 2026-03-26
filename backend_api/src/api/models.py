@@ -2,9 +2,10 @@
 Pydantic models for the Insurance Fraud Detection Platform API.
 Defines request/response schemas for claims, rules, assignments, outcomes, and reporting.
 """
+import json
 from datetime import date
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from enum import Enum
 
 
@@ -107,6 +108,76 @@ class ClaimResponse(BaseModel):
     ingestion_source: Optional[str] = Field("manual", description="How claim was ingested")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
     updated_at: Optional[str] = Field(None, description="Last update timestamp")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_fields(cls, values: Any) -> Any:
+        """Pre-process raw data before field-level validation.
+
+        Handles JSONB third_parties, null required fields, and type mismatches
+        that can occur when claims are inserted manually via SQL.
+        """
+        if not isinstance(values, dict):
+            return values
+
+        # --- third_parties: convert JSONB list/dict to string ---
+        tp = values.get("third_parties")
+        if tp is not None:
+            if isinstance(tp, (list, tuple)):
+                values["third_parties"] = ", ".join(str(item) for item in tp)
+            elif isinstance(tp, dict):
+                try:
+                    values["third_parties"] = json.dumps(tp)
+                except (TypeError, ValueError):
+                    values["third_parties"] = str(tp)
+            elif not isinstance(tp, str):
+                values["third_parties"] = str(tp)
+
+        # --- Safe defaults for required fields that might be null ---
+        if not values.get("claim_number"):
+            values["claim_number"] = "UNKNOWN"
+        if not values.get("claim_type"):
+            values["claim_type"] = "Unknown"
+        if not values.get("incident_date"):
+            values["incident_date"] = date.today().isoformat()
+
+        # --- claim_amount: ensure numeric ---
+        try:
+            values["claim_amount"] = float(values.get("claim_amount") or 0)
+        except (TypeError, ValueError):
+            values["claim_amount"] = 0.0
+
+        # --- witnesses: ensure int or None ---
+        w = values.get("witnesses")
+        if w is not None:
+            try:
+                values["witnesses"] = int(w)
+            except (TypeError, ValueError):
+                values["witnesses"] = 0
+
+        # --- fraud_score: ensure int or None ---
+        fs = values.get("fraud_score")
+        if fs is not None:
+            try:
+                values["fraud_score"] = int(fs)
+            except (TypeError, ValueError):
+                values["fraud_score"] = 0
+
+        # --- police_report_filed: ensure bool or None ---
+        prf = values.get("police_report_filed")
+        if prf is not None and not isinstance(prf, bool):
+            if isinstance(prf, str):
+                values["police_report_filed"] = prf.lower() in ("true", "1", "yes", "t")
+            else:
+                values["police_report_filed"] = bool(prf)
+
+        # --- Stringify date/datetime objects ---
+        for date_field in ("incident_date", "filed_date", "created_at", "updated_at"):
+            val = values.get(date_field)
+            if val is not None and not isinstance(val, str):
+                values[date_field] = str(val)
+
+        return values
 
 
 class ClaimUpdate(BaseModel):
