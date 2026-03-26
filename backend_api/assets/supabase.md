@@ -1,0 +1,126 @@
+# Supabase Integration - Insurance Fraud Detection Platform
+
+## Overview
+The backend API connects to Supabase as its primary PostgreSQL database using the Supabase Python client library (`supabase>=2.0.0`).
+The frontend dashboard communicates with Supabase **indirectly** through the backend API (via Next.js rewrites to port 3001).
+
+## Environment Variables
+
+### Backend API (`backend_api`)
+- `SUPABASE_URL`: The Supabase project URL
+- `SUPABASE_KEY`: The Supabase anon/public API key
+
+### Frontend Dashboard (`frontend_dashboard`)
+- `NEXT_PUBLIC_SUPABASE_URL`: The Supabase project URL (available but frontend uses backend proxy)
+- `NEXT_PUBLIC_SUPABASE_KEY`: The Supabase anon/public API key (available but frontend uses backend proxy)
+- `NEXT_PUBLIC_API_BASE`: Backend API base URL for proxied requests
+- `NEXT_PUBLIC_BACKEND_URL`: Backend service URL
+
+> **Note:** The frontend does NOT use a direct Supabase client. All data flows through the backend API.
+
+## Connection
+The Supabase client is initialized in `backend_api/src/api/database.py` using:
+```python
+from supabase import create_client, Client
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+```
+All database operations use the Supabase REST API through the Python client.
+
+## Database Schema
+
+### Tables (12 total)
+
+| Table | Description |
+|-------|-------------|
+| `users` | System users (investigators, managers, admins) with role enum |
+| `policyholders` | Insurance policyholders with PII |
+| `policies` | Insurance policies linked to policyholders |
+| `claims` | Insurance claims with fraud scores, computed risk_level |
+| `fraud_rules` | Configurable fraud detection rules (6 default rules) |
+| `fraud_signals` | Per-claim rule evaluation results with explanations |
+| `investigator_assignments` | Claim-to-investigator assignments with status tracking |
+| `claim_outcomes` | Fraud investigation outcomes with recovery amounts |
+| `network_relationships` | Entity relationship graph data for network views |
+| `claim_documents` | Claim document attachments |
+| `audit_log` | Compliance audit trail |
+| `report_snapshots` | Saved report data for manager reporting |
+
+### Custom Enums
+- `claim_status`: new, under_review, flagged, investigating, closed_confirmed_fraud, closed_legitimate, closed_insufficient_evidence
+- `assignment_status`: pending, accepted, in_progress, completed, reassigned
+- `fraud_outcome_type`: confirmed_fraud, legitimate, insufficient_evidence, referred_to_law_enforcement, pending
+- `user_role`: investigator, manager, admin
+- `rule_category`: amount, frequency, timing, location, pattern, network, custom
+
+### Computed Columns
+- `claims.risk_level`: Generated ALWAYS AS based on fraud_score (high ≥75, medium ≥40, low <40)
+
+### Indexes (18 total)
+Performance indexes on all frequently queried columns including:
+- claims: status, fraud_score, policy_id, policyholder_id, assigned_investigator_id, filed_date
+- fraud_signals: claim_id, rule_id
+- investigator_assignments: investigator_id, claim_id, status
+- claim_outcomes: claim_id
+- network_relationships: entity_a, entity_b
+- audit_log: entity, user_id
+- policies: policyholder_id
+- claim_documents: claim_id
+
+### Triggers
+- `update_updated_at_column()`: Auto-updates `updated_at` on UPDATE for users, policyholders, policies, claims, fraud_rules, investigator_assignments, claim_outcomes
+
+## RLS Policies
+Row Level Security is enabled on **all 12 tables**. Current policies allow anon access for all operations
+(the backend handles application-level authorization via the anon key).
+
+Each table has a policy: `anon_all_<table>` granting full CRUD to the `anon` role.
+
+## Seed Data
+
+### Default Users (3)
+| ID | Email | Role | Department |
+|----|-------|------|------------|
+| `00000000-...-000000000001` | admin@insure.com | admin | Admin |
+| `00000000-...-000000000002` | mgr@insure.com | manager | SIU |
+| `00000000-...-000000000003` | inv@insure.com | investigator | SIU |
+
+### Default Fraud Rules (6)
+| Rule Name | Category | Weight | Description |
+|-----------|----------|--------|-------------|
+| High Amount | amount | 25 | Flags claims over $15,000 |
+| Quick Filing | timing | 18 | Filed within 2 days of policy |
+| Recent Address Change | pattern | 15 | Address changed <3m before claim |
+| Multiple Claims in 6 Months | frequency | 20 | >2 claims in 6m from same holder |
+| Out-of-State Incident | location | 10 | Incident state ≠ policyholder state |
+| Known Fraud Network | network | 30 | Related to prior fraud network |
+
+### Sample Data
+- 1 policyholder (Elena Smith)
+- 1 policy (POL123456, Auto)
+- 1 claim (CLM5555, Collision, $16,000, fraud_score=82, risk_level=high)
+- 3 fraud signals for the sample claim
+- 1 investigator assignment
+- 1 claim outcome (confirmed_fraud, $13,000 recovery)
+- 1 network relationship
+
+## Schema Management
+The database schema is managed via the `claims_database` container:
+- `claims_database/scripts/migrate.py` - Full DDL migration
+- `claims_database/scripts/seed_data.py` - Seed data population
+
+## Dependencies
+### Backend (Python)
+- `supabase>=2.0.0` - Supabase Python client
+- `python-dotenv==1.1.0` - Environment variable loading
+
+### Frontend (Node.js)
+- No direct Supabase dependency needed (uses backend API proxy)
+
+## Setup Instructions
+
+### IMPORTANT: Supabase Configuration
+1. Ensure `SUPABASE_URL` and `SUPABASE_KEY` environment variables are set for the backend
+2. Ensure `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_KEY` are set for the frontend container
+3. Run migration script or use SupabaseTools to create schema
+4. Run seed script or use SupabaseTools to populate default data
+5. Verify tables exist and seed data is present via Supabase dashboard

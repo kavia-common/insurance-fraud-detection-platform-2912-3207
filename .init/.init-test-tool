@@ -1,0 +1,4 @@
+{
+    "command": "pytest",
+    "working_directory": "/home/kavia/workspace/code-generation/insurance-fraud-detection-platform-2912-3207/backend_api"
+}
