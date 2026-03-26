@@ -143,14 +143,17 @@ def create_claim(claim: ClaimCreate):
     summary="Upload claims via CSV",
     description=(
         "Ingest multiple claims from a CSV file. Expected columns: "
-        "claim_number, claim_type, claim_amount, incident_date, description, "
-        "location, police_report_filed, witnesses."
+        "claim_number, claimant_name, claimant_address, policy_number, "
+        "claim_type, claim_amount, incident_date, description, "
+        "location, police_report_filed, witnesses, third_parties. "
+        "Optional columns: policy_id, policyholder_id, police_report_number, filed_date."
     ),
 )
 async def upload_csv(file: UploadFile = File(...)):
     """Ingest claims from a CSV file upload.
 
     Processes each row, creates claims, and runs fraud scoring on each.
+    Supports new AC1 fields: claimant_name, claimant_address, policy_number, third_parties.
 
     Args:
         file: Uploaded CSV file.
@@ -192,7 +195,17 @@ async def upload_csv(file: UploadFile = File(...)):
                 "status": "new",
             }
 
-            # Optional fields
+            # New AC1 ingestion fields
+            if row.get("claimant_name"):
+                claim_data["claimant_name"] = row["claimant_name"].strip()
+            if row.get("claimant_address"):
+                claim_data["claimant_address"] = row["claimant_address"].strip()
+            if row.get("policy_number"):
+                claim_data["policy_number"] = row["policy_number"].strip()
+            if row.get("third_parties"):
+                claim_data["third_parties"] = row["third_parties"].strip()
+
+            # Optional reference ID fields
             if row.get("policy_id"):
                 claim_data["policy_id"] = row["policy_id"]
             if row.get("policyholder_id"):

@@ -65,6 +65,9 @@ class ClaimCreate(BaseModel):
     claim_number: str = Field(..., description="Unique claim reference number")
     policy_id: Optional[str] = Field(None, description="UUID of the associated policy")
     policyholder_id: Optional[str] = Field(None, description="UUID of the policyholder")
+    claimant_name: Optional[str] = Field(None, description="Full name of the claimant filing the claim")
+    claimant_address: Optional[str] = Field(None, description="Mailing or residential address of the claimant")
+    policy_number: Optional[str] = Field(None, description="Policy number associated with the claim (human-readable reference)")
     claim_type: str = Field(..., description="Type of claim (e.g., Collision, Theft)")
     claim_amount: float = Field(..., description="Dollar amount of the claim", ge=0)
     incident_date: date = Field(..., description="Date the incident occurred")
@@ -74,6 +77,7 @@ class ClaimCreate(BaseModel):
     police_report_filed: Optional[bool] = Field(False, description="Whether a police report was filed")
     police_report_number: Optional[str] = Field(None, description="Police report reference number")
     witnesses: Optional[int] = Field(0, description="Number of witnesses", ge=0)
+    third_parties: Optional[str] = Field(None, description="Comma-separated list or JSON string of third-party names/entities involved in the claim")
 
 
 # PUBLIC_INTERFACE
@@ -83,6 +87,9 @@ class ClaimResponse(BaseModel):
     claim_number: str = Field(..., description="Unique claim reference number")
     policy_id: Optional[str] = Field(None, description="Associated policy UUID")
     policyholder_id: Optional[str] = Field(None, description="Policyholder UUID")
+    claimant_name: Optional[str] = Field(None, description="Full name of the claimant")
+    claimant_address: Optional[str] = Field(None, description="Address of the claimant")
+    policy_number: Optional[str] = Field(None, description="Human-readable policy number")
     claim_type: str = Field(..., description="Type of claim")
     claim_amount: float = Field(..., description="Dollar amount")
     incident_date: str = Field(..., description="Incident date")
@@ -95,6 +102,7 @@ class ClaimResponse(BaseModel):
     police_report_filed: Optional[bool] = Field(False, description="Police report filed flag")
     police_report_number: Optional[str] = Field(None, description="Police report number")
     witnesses: Optional[int] = Field(0, description="Number of witnesses")
+    third_parties: Optional[str] = Field(None, description="Third-party names/entities involved")
     assigned_investigator_id: Optional[str] = Field(None, description="Assigned investigator UUID")
     ingestion_source: Optional[str] = Field("manual", description="How claim was ingested")
     created_at: Optional[str] = Field(None, description="Creation timestamp")
@@ -103,6 +111,9 @@ class ClaimResponse(BaseModel):
 
 class ClaimUpdate(BaseModel):
     """Schema for updating a claim."""
+    claimant_name: Optional[str] = Field(None, description="Full name of the claimant")
+    claimant_address: Optional[str] = Field(None, description="Address of the claimant")
+    policy_number: Optional[str] = Field(None, description="Human-readable policy number")
     claim_type: Optional[str] = None
     claim_amount: Optional[float] = None
     description: Optional[str] = None
@@ -111,6 +122,7 @@ class ClaimUpdate(BaseModel):
     police_report_filed: Optional[bool] = None
     police_report_number: Optional[str] = None
     witnesses: Optional[int] = None
+    third_parties: Optional[str] = Field(None, description="Third-party names/entities involved")
 
 
 # ---- Fraud Rule Models ----
@@ -326,7 +338,13 @@ class ReportResponse(BaseModel):
 
 # PUBLIC_INTERFACE
 class CSVUploadResponse(BaseModel):
-    """Response after CSV claim ingestion."""
+    """Response after CSV claim ingestion.
+
+    CSV files may include columns: claim_number, claimant_name, claimant_address,
+    policy_number, claim_type, claim_amount, incident_date, description, location,
+    police_report_filed, witnesses, third_parties, policy_id, policyholder_id,
+    police_report_number, filed_date.
+    """
     total_rows: int = Field(..., description="Total rows in CSV")
     successfully_ingested: int = Field(..., description="Successfully ingested rows")
     failed_rows: int = Field(..., description="Failed rows")

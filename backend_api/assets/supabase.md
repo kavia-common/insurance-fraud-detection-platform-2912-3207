@@ -35,7 +35,7 @@ All database operations use the Supabase REST API through the Python client.
 | `users` | System users (investigators, managers, admins) with role enum |
 | `policyholders` | Insurance policyholders with PII |
 | `policies` | Insurance policies linked to policyholders |
-| `claims` | Insurance claims with fraud scores, computed risk_level |
+| `claims` | Insurance claims with fraud scores, computed risk_level. Includes claimant_name, claimant_address, policy_number (text), and third_parties (text) fields for AC1 ingestion. |
 | `fraud_rules` | Configurable fraud detection rules (6 default rules) |
 | `fraud_signals` | Per-claim rule evaluation results with explanations |
 | `investigator_assignments` | Claim-to-investigator assignments with status tracking |
@@ -51,6 +51,21 @@ All database operations use the Supabase REST API through the Python client.
 - `fraud_outcome_type`: confirmed_fraud, legitimate, insufficient_evidence, referred_to_law_enforcement, pending
 - `user_role`: investigator, manager, admin
 - `rule_category`: amount, frequency, timing, location, pattern, network, custom
+
+### New Claims Columns (AC1 Ingestion Fields)
+The `claims` table includes the following additional text columns for claim ingestion:
+- `claimant_name` (TEXT, nullable): Full name of the claimant filing the claim
+- `claimant_address` (TEXT, nullable): Mailing or residential address of the claimant
+- `policy_number` (TEXT, nullable): Human-readable policy number associated with the claim
+- `third_parties` (TEXT, nullable): Comma-separated list or free-text of third-party names/entities involved in the claim
+
+**Migration SQL for adding these columns (if not already present):**
+```sql
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS claimant_name TEXT;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS claimant_address TEXT;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS policy_number TEXT;
+ALTER TABLE claims ADD COLUMN IF NOT EXISTS third_parties TEXT;
+```
 
 ### Computed Columns
 - `claims.risk_level`: Generated ALWAYS AS based on fraud_score (high ≥75, medium ≥40, low <40)
